@@ -102,7 +102,8 @@ typedef unsigned long KeySym;
    OVERLAY_PARAM_CUSTOM(toggle_fps_limit)            \
    OVERLAY_PARAM_CUSTOM(toggle_logging)              \
    OVERLAY_PARAM_CUSTOM(reload_cfg)                  \
-   OVERLAY_PARAM_CUSTOM(crosshair_size)                  \
+   OVERLAY_PARAM_CUSTOM(crosshair_size)              \
+   OVERLAY_PARAM_CUSTOM(crosshair_color)             \
    OVERLAY_PARAM_CUSTOM(upload_log)                  \
    OVERLAY_PARAM_CUSTOM(upload_logs)                 \
    OVERLAY_PARAM_CUSTOM(offset_x)                    \

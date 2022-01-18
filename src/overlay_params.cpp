@@ -599,6 +599,7 @@ parse_overlay_config(struct overlay_params *params,
    params->time_format = "%T";
    params->gpu_color = 0x2e9762;
    params->cpu_color = 0x2e97cb;
+   params->crosshair_color = 0xff0000;
    params->vram_color = 0xad64c1;
    params->ram_color = 0xc26693;
    params->engine_color = 0xeb5b5b;
