@@ -528,6 +528,11 @@ parse_overlay_env(struct overlay_params *params,
          params->enabled[OVERLAY_PARAM_ENABLED_crosshair] = 0;
          params->enabled[OVERLAY_PARAM_ENABLED_gpu_load_change] = 0;
          params->enabled[OVERLAY_PARAM_ENABLED_cpu_load_change] = 0;
+         params->enabled[OVERLAY_PARAM_ENABLED_fps_only] = 0;
+         params->enabled[OVERLAY_PARAM_ENABLED_force_amdgpu_hwmon] = 0;
+         params->enabled[OVERLAY_PARAM_ENABLED_fps_color_change] = 0;
+         params->enabled[OVERLAY_PARAM_ENABLED_core_load_change] = 0;
+         params->enabled[OVERLAY_PARAM_ENABLED_battery_icon] = 0;
          params->enabled[OVERLAY_PARAM_ENABLED_read_cfg] = read_cfg;
       }
 #define OVERLAY_PARAM_BOOL(name)                                       \
@@ -664,7 +669,14 @@ parse_overlay_config(struct overlay_params *params,
    if (!env || read_cfg) {
 
       // Get config options
-      parseConfigFile(*params);
+      bool has_config_file = parseConfigFile(*params);
+#ifdef MANGOAPP
+      // Enable no_display if we have no config at all
+      // so we don't start randomly showing mangoapp if
+      // things went wrong somewhere.
+      if (!has_config_file)
+         params->no_display = true;
+#endif
       if (params->options.find("full") != params->options.end() && params->options.find("full")->second != "0") {
 #define OVERLAY_PARAM_BOOL(name) \
             params->enabled[OVERLAY_PARAM_ENABLED_##name] = 1;
@@ -675,6 +687,8 @@ parse_overlay_config(struct overlay_params *params,
          params->enabled[OVERLAY_PARAM_ENABLED_histogram] = 0;
          params->enabled[OVERLAY_PARAM_ENABLED_crosshair] = 0;
          params->enabled[OVERLAY_PARAM_ENABLED_fps_only] = 0;
+         params->enabled[OVERLAY_PARAM_ENABLED_battery_icon] = 0;
+         params->enabled[OVERLAY_PARAM_ENABLED_force_amdgpu_hwmon] = 0;
          params->options.erase("full");
       }
       for (auto& it : params->options) {
@@ -815,14 +829,17 @@ parse_overlay_config(struct overlay_params *params,
    // Needs ImGui context but it is null here for OpenGL so just note it and update somewhere else
    HUDElements.colors.update = true;
 
+   if(logger && logger->m_params == nullptr) logger.reset();
    if(!logger) logger = std::make_unique<Logger>(HUDElements.params);
    if(params->autostart_log && !logger->is_active())
       std::thread(autostart_log, params->autostart_log).detach();
 #ifdef MANGOAPP
    {
+      extern bool new_frame;
       std::lock_guard<std::mutex> lk(mangoapp_m);
       params->no_display = params->no_display;
-      mangoapp_cv.notify_one();
+      new_frame = true; // we probably changed how we look.
    }
+   mangoapp_cv.notify_one();
 #endif
 }

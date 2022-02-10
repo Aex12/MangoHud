@@ -12,6 +12,7 @@
 #include "memory.h"
 #include "mesa/util/macros.h"
 #include "string_utils.h"
+#include "app/mangoapp.h"
 #include <IconsForkAwesome.h>
 
 #define CHAR_CELSIUS    "\xe2\x84\x83"
@@ -181,7 +182,11 @@ void HudElements::gpu_stats(){
         }
         if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_gpu_power]) {
             ImGui::TableNextColumn();
-            right_aligned_text(text_color, HUDElements.ralign_width, "%i", gpu_info.powerUsage);
+#ifdef MANGOAPP            
+            right_aligned_text(text_color, HUDElements.ralign_width, "%.1f", gpu_info.powerUsage);
+#else
+    right_aligned_text(text_color, HUDElements.ralign_width, "%.0f", gpu_info.powerUsage);
+#endif
             ImGui::SameLine(0, 1.0f);
             ImGui::PushFont(HUDElements.sw_stats->font1);
             ImGui::Text("W");
@@ -242,7 +247,11 @@ void HudElements::cpu_stats(){
         }
         if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_cpu_power]){
             ImGui::TableNextColumn();
-            right_aligned_text(HUDElements.colors.text, HUDElements.ralign_width, "%i", cpuStats.GetCPUDataTotal().power);
+        #ifdef MANGOAPP   
+            right_aligned_text(HUDElements.colors.text, HUDElements.ralign_width, "%.1f", cpuStats.GetCPUDataTotal().power);
+        #else
+            right_aligned_text(HUDElements.colors.text, HUDElements.ralign_width, "%.0f", cpuStats.GetCPUDataTotal().power);
+        #endif
             ImGui::SameLine(0, 1.0f);
             ImGui::PushFont(HUDElements.sw_stats->font1);
             ImGui::Text("W");
@@ -336,7 +345,7 @@ void HudElements::vram(){
         ImGui::PushFont(HUDElements.sw_stats->font1);
         ImGui::Text("GiB");
         ImGui::PopFont();
-#ifndef MANGOAPP        
+#ifndef MANGOAPP
         if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_gpu_mem_clock]){
             ImGui::TableNextColumn();
             right_aligned_text(HUDElements.colors.text, HUDElements.ralign_width, "%i", gpu_info.MemClock);
@@ -559,7 +568,7 @@ void HudElements::frame_timing(){
         for (size_t i = 0; i < HUDElements.params->table_columns - 1; i++)
             ImGui::TableNextColumn();
         ImGui::Dummy(ImVec2(0.0f, real_font_size.y));
-        right_aligned_text(HUDElements.colors.text, HUDElements.ralign_width * 1.3, "%.1f ms", 1000 / HUDElements.sw_stats->fps);
+        right_aligned_text(HUDElements.colors.text, HUDElements.ralign_width * 1.3, "min: %.1fms, max: %.1fms", min_frametime, max_frametime);
         ImGui::PopFont();
         ImGui::TableNextRow(); ImGui::TableNextColumn();
         char hash[40];
@@ -720,12 +729,52 @@ void HudElements::battery(){
                 ImGui::PushFont(HUDElements.sw_stats->font1);
                 ImGui::Text("W");
                 ImGui::PopFont();
+                ImGui::TableNextRow(); ImGui::TableNextColumn();
+                float hours;
+                float minutes;
+                float seconds;
+                minutes = std::modf(Battery_Stats.remaining_time, &hours);
+                minutes *= 60;
+                seconds = std::modf(minutes, &minutes);
+                seconds *= 60;
+                ImGui::PushFont(HUDElements.sw_stats->font1);
+                ImGui::TextColored(HUDElements.colors.text, "%s", "Remaining Time");
+                ImGui::PopFont();
+                ImGui::TableNextColumn();
+                ImGui::TextColored(HUDElements.colors.text, "%02.0f:%02.0f:%02.0f", hours, minutes, seconds);
             }
         }
     }
 #endif
 }
 
+void HudElements::gamescope_fsr(){
+#ifdef MANGOAPP
+    ImGui::TableNextRow(); ImGui::TableNextColumn();
+    string FSR_TEXT;
+    ImVec4 FSR_COLOR;
+    if (g_fsrUpscale){
+        FSR_TEXT = "ON";
+        FSR_COLOR = HUDElements.colors.fps_value_high;
+    } else {
+        FSR_TEXT = "OFF";
+        FSR_COLOR = HUDElements.colors.fps_value_low;
+    }
+    
+    ImGui::TextColored(HUDElements.colors.engine, "%s", "FSR");
+    if (g_fsrUpscale){
+        ImGui::SameLine();
+        ImGui::TextColored(FSR_COLOR, "%s", FSR_TEXT.c_str());
+        ImGui::TableNextColumn();
+        ImGui::TextColored(HUDElements.colors.engine, "Sharpness");
+        ImGui::TableNextColumn();
+        right_aligned_text(HUDElements.colors.text, HUDElements.ralign_width, "%i", g_fsrSharpness);
+    } else {
+        ImGui::TableNextColumn();
+        right_aligned_text(HUDElements.colors.text, HUDElements.ralign_width, "%s", FSR_TEXT.c_str());
+    }
+#endif
+}
 
 void HudElements::graphs(){
     ImGui::TableNextRow(); ImGui::TableNextColumn();
@@ -876,6 +925,7 @@ void HudElements::sort_elements(const std::pair<std::string, std::string>& optio
                                       exec_list.push_back({int(ordered_functions.size() - 1), value});       }
     if (param == "battery")         { ordered_functions.push_back({battery, value});                }
     if (param == "fps_only")        { ordered_functions.push_back({fps_only, value});               }
+    if (param == "fsr")             { ordered_functions.push_back({gamescope_fsr, value});          }
     if (param == "graphs"){
         if (!HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_graphs])
             HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_graphs] = true;
@@ -906,7 +956,9 @@ void HudElements::legacy_elements(){
     ordered_functions.push_back({vram,               value});
     ordered_functions.push_back({ram,                value});
     ordered_functions.push_back({battery,            value});
+    ordered_functions.push_back({gamescope_fsr,      value});
     ordered_functions.push_back({fps,                value});
+    ordered_functions.push_back({fps_only,           value});
 #ifndef MANGOAPP
     ordered_functions.push_back({engine_version,     value});
 #endif

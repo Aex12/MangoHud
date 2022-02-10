@@ -62,10 +62,13 @@ void writeSummary(string filename){
   SPDLOG_DEBUG("Writing summary log file [{}]", filename, logArray.size());
   std::ofstream out(filename, ios::out | ios::app);
   if (out){
-    out << "0.1% Min," << "1% Min," << "97% Percentile," << "Average," << "GPU Load," << "CPU Load" << "\n";
+    out << "0.1% Min FPS," << "1% Min FPS," << "97% Percentile FPS," << "Average FPS," << "GPU Load," << "CPU Load" << "\n";
     std::vector<logData> sorted = logArray;
     std::sort(sorted.begin(), sorted.end(), compareByFps);
-    float total, total_cpu, total_gpu; float result;
+    float total = 0.0f;
+    float total_cpu = 0.0f;
+    float total_gpu = 0.0f;
+    float result;
     float percents[2] = {0.001, 0.01};
     for (auto percent : percents){
       total = 0;
@@ -77,7 +80,7 @@ void writeSummary(string filename){
       out << fixed << setprecision(1) << result << ",";
     }
     // 97th percentile
-    result = sorted[floor(0.97 * (sorted.size() - 1))].fps;
+    result = sorted.empty() ? 0.0f : sorted[floor(0.97 * (sorted.size() - 1))].fps;
     out << fixed << setprecision(1) << result << ",";
     // avg
     total = 0;
@@ -90,10 +93,10 @@ void writeSummary(string filename){
     out << fixed << setprecision(1) << result << ",";
     // GPU
     result = total_gpu / sorted.size();
-    out << fixed << setprecision(1) << result << ",";
+    out << result << ",";
     // CPU
     result = total_cpu / sorted.size();
-    out << fixed << setprecision(1) << result << "";
+    out << result;
   } else {
     printf("MANGOHUD: Failed to write log file\n");
   }
@@ -149,6 +152,7 @@ Logger::Logger(overlay_params* in_params)
     m_values_valid(false),
     m_params(in_params)
 {
+  m_log_end = Clock::now() - 15s;
   SPDLOG_DEBUG("Logger constructed!");
 }
 
@@ -157,6 +161,9 @@ void Logger::start_logging() {
   m_values_valid = false;
   m_logging_on = true;
   m_log_start = Clock::now();
+#ifdef MANGOAPP
+  HUDElements.params->log_interval = 0;
+#endif
   if((!m_params->output_folder.empty()) && (m_params->log_interval != 0)){
     std::thread(logging).detach();
   }
@@ -181,7 +188,9 @@ void Logger::stop_logging() {
   } else {
 #ifdef MANGOAPP    
     string path = std::getenv("HOME");
-    writeSummary(path + "/mangoapp_" + get_log_suffix());
+    std::string logName = path + "/mangoapp_" + get_log_suffix();
+    writeSummary(logName);
+    writeFile(logName);
 #endif
   }
   logger->clear_log_data();
@@ -194,7 +203,7 @@ void Logger::try_log() {
   auto elapsedLog = now - m_log_start;
 
   currentLogData.previous = elapsedLog;
-  currentLogData.fps = fps;
+  currentLogData.fps = 1000.f / (frametime / 1000.f);
   currentLogData.frametime = frametime;
   m_log_array.push_back(currentLogData);
 
@@ -250,7 +259,7 @@ void Logger::calculate_benchmark_data(){
         // the percentiles are already validated when they're parsed from the config.
         float fraction = parse_float(percentile) / 100;
 
-        result = sorted[(fraction * sorted.size()) - 1];
+        result = sorted.empty() ? 0.0f : sorted[(fraction * sorted.size()) - 1];
         percentile += "%";
       }
 

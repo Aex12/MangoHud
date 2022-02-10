@@ -5,6 +5,7 @@
 #include <condition_variable>
 #include <spdlog/spdlog.h>
 #include <filesystem.h>
+#include <sys/stat.h>
 #include "overlay.h"
 #include "logging.h"
 #include "cpu.h"
@@ -43,6 +44,8 @@ ImVec2 real_font_size;
 std::deque<logData> graph_data;
 const char* engines[] = {"Unknown", "OpenGL", "VULKAN", "DXVK", "VKD3D", "DAMAVAND", "ZINK", "WINED3D", "Feral3D", "ToGL", "GAMESCOPE"};
 overlay_params *_params {};
+double min_frametime, max_frametime;
+bool gpu_metrics_exists = false;
 
 void update_hw_info(struct swapchain_stats& sw_stats, struct overlay_params& params, uint32_t vendorID)
 {
@@ -61,6 +64,9 @@ void update_hw_info(struct swapchain_stats& sw_stats, struct overlay_params& par
    if (params.enabled[OVERLAY_PARAM_ENABLED_gpu_stats] || logger->is_active()) {
       if (vendorID == 0x1002 && getAmdGpuInfo_actual)
          getAmdGpuInfo_actual();
+      
+      if (gpu_metrics_exists)
+         amdgpu_get_metrics();
 
       if (vendorID == 0x10de)
          getNvidiaGpuInfo();
@@ -95,9 +101,6 @@ void update_hw_info(struct swapchain_stats& sw_stats, struct overlay_params& par
    graph_data.push_back(currentLogData);
    logger->notify_data_valid();
    HUDElements.update_exec();
-#ifdef MANGOAPP   
-   amdgpu_get_metrics();
-#endif
 }
 
 struct hw_info_updater
@@ -195,7 +198,13 @@ void update_hud_info_with_frametime(struct swapchain_stats& sw_stats, struct ove
       sw_stats.last_fps_update = now;
 
    }
-
+   double min_time = UINT64_MAX, max_time = 0;
+   for (auto& stat : sw_stats.frames_stats ){
+      min_time = MIN2(stat.stats[0], min_time);
+      max_time = MAX2(stat.stats[0], min_time);
+   }
+   min_frametime = min_time / sw_stats.time_dividor;
+   max_frametime = max_time / sw_stats.time_dividor;
    if (params.log_interval == 0){
       logger->try_log();
    }
@@ -384,7 +393,9 @@ void render_benchmark(swapchain_stats& data, struct overlay_params& params, ImVe
       ImGui::SetNextWindowPos(ImVec2(data.main_window_pos.x, data.main_window_pos.y - benchHeight - 5), ImGuiCond_Always);
    else
       ImGui::SetNextWindowPos(ImVec2(data.main_window_pos.x, data.main_window_pos.y + window_size.y + 5), ImGuiCond_Always);
-
+#ifdef MANGOAPP
+   ImGui::SetNextWindowPos(ImVec2(data.main_window_pos.x, data.main_window_pos.y + window_size.y + 5), ImGuiCond_Always);
+#endif
    float display_time = std::chrono::duration<float>(now - logger->last_log_end()).count();
    static float display_for = 10.0f;
    float alpha;
@@ -431,7 +442,7 @@ void render_benchmark(swapchain_stats& data, struct overlay_params& params, ImVe
       ImGui::TextColored(ImVec4(1.0, 1.0, 1.0, alpha / params.background_alpha), "%s %.1f", data_.first.c_str(), data_.second);
    }
 
-   float max = *max_element(benchmark.fps_data.begin(), benchmark.fps_data.end());
+   float max = benchmark.fps_data.empty() ? 0.0f : *max_element(benchmark.fps_data.begin(), benchmark.fps_data.end());
    ImVec4 plotColor = HUDElements.colors.frametime;
    plotColor.w = alpha / params.background_alpha;
    ImGui::PushStyleColor(ImGuiCol_PlotLines, plotColor);
@@ -495,7 +506,7 @@ void render_imgui(swapchain_stats& data, struct overlay_params& params, ImVec2& 
          ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(data.main_window_pos.x + window_size.x - 15, data.main_window_pos.y + 15), 10, params.engine_color, 20);
       window_size = ImVec2(window_size.x, ImGui::GetCursorPosY() + 10.0f);
       ImGui::End();
-      if((now - logger->last_log_end()) < 12s)
+      if((now - logger->last_log_end()) < 12s && !logger->is_active())
          render_benchmark(data, params, window_size, height, now);
 
       // Crosshair
@@ -633,22 +644,32 @@ void init_gpu_stats(uint32_t& vendorID, uint32_t reported_deviceID, overlay_para
          SPDLOG_DEBUG("using amdgpu path: {}", path);
 
 #ifdef HAVE_LIBDRM_AMDGPU
-         int idx = -1;
-         //TODO make neater
-         int res = sscanf(path.c_str(), "/sys/class/drm/card%d", &idx);
-         std::string dri_path = "/dev/dri/card" + std::to_string(idx);
+         struct stat buffer;
+         std::string gpu_metrics_path = path + "/device/gpu_metrics";
+         if (stat(gpu_metrics_path.c_str(), &buffer) == 0 ){
+            gpu_metrics_exists = true;
+            metrics_path = gpu_metrics_path;
+            SPDLOG_DEBUG("Using gpu_metrics");
+         } else {
+            int idx = -1;
+            //TODO make neater
+            int res = sscanf(path.c_str(), "/sys/class/drm/card%d", &idx);
+            std::string dri_path = "/dev/dri/card" + std::to_string(idx);
 
-         if (!params.enabled[OVERLAY_PARAM_ENABLED_force_amdgpu_hwmon] && res == 1 && amdgpu_open(dri_path.c_str())) {
-            vendorID = 0x1002;
-            using_libdrm = true;
-            getAmdGpuInfo_actual = getAmdGpuInfo_libdrm;
-            amdgpu_set_sampling_period(params.fps_sampling_period);
+            if (!params.enabled[OVERLAY_PARAM_ENABLED_force_amdgpu_hwmon] && res == 1 && amdgpu_open(dri_path.c_str())) {
+               vendorID = 0x1002;
+               using_libdrm = true;
+               getAmdGpuInfo_actual = getAmdGpuInfo_libdrm;
+               amdgpu_set_sampling_period(params.fps_sampling_period);
 
-            SPDLOG_DEBUG("Using libdrm");
+               SPDLOG_DEBUG("Using libdrm");
 
-            // fall through and open sysfs handles for fallback or check DRM version beforehand
-         } else if (!params.enabled[OVERLAY_PARAM_ENABLED_force_amdgpu_hwmon]) {
-            SPDLOG_ERROR("Failed to open device '/dev/dri/card{}' with libdrm, falling back to using hwmon sysfs.", idx);
+               // fall through and open sysfs handles for fallback or check DRM version beforehand
+            } else if (!params.enabled[OVERLAY_PARAM_ENABLED_force_amdgpu_hwmon]) {
+               SPDLOG_ERROR("Failed to open device '/dev/dri/card{}' with libdrm, falling back to using hwmon sysfs.", idx);
+            } else if (params.enabled[OVERLAY_PARAM_ENABLED_force_amdgpu_hwmon]) {
+               SPDLOG_DEBUG("Using amdgpu hwmon");
+            }
          }
 #endif
 
